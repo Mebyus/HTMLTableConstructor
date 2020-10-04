@@ -1,16 +1,19 @@
 let table = document.createElement('table')
 document.body.appendChild(table)
 
-let head = table.createTHead()
-
 let config = {
     layout: [
-        { id: 1 },
+        { id: 1 }, 
         { id: 2 },
-        { id: 3 },
+        { 
+            // data column
+            id: 3, // = id from columns config
+            caption: 'Какой-то другой заголовок', // you can override column caption here
+        },
         { id: 4 },
         { id: 5 },
         {
+            // column with subcolumns (union) can't be data column
             caption: 'Не распознан РЗ',
             subcolumns: [
                 { id: 6 },
@@ -44,9 +47,9 @@ let config = {
     ],
     columns: [
         {
-            id: 1,
+            id: 1, // data column id
             source: 'row_number',
-            caption: '№ п/п',
+            caption: '№',
             type: 'integer',
             gravity: 10,
             displaySort: false,
@@ -174,33 +177,20 @@ let config = {
     ],
 }
 
-function traverse(layout) {
-    let result = {
-        depth: 0,
-        width: 0,
-    }
+function traverse(layout, billet, depth) {
+    let width = 0
+    let nextDepth = 1 + (depth || 0)
     for (let i = 0; i < layout.length; i++) {
         if (layout[i].subcolumns) {
-            let subresult = traverse(layout[i].subcolumns)
-            if (subresult.depth > result.depth) {
-                result.depth = subresult.depth
-            }
-            result.width += subresult.width
+            let subwidth = traverse(layout[i].subcolumns, billet, nextDepth)
+            billet.insert({ type: 'union', colspan: subwidth, caption: layout[i].caption }, depth || 0)
+            width += subwidth
         } else {
-            result.width++
+            billet.insert({ type: 'data', id: layout[i].id, caption: layout[i].caption }, depth || 0)
+            width++
         }
     }
-    result.depth++
-    return result
-}
-
-function constructTableHeader(head, config) {
-    let depth = traverse(config.layout)
-    let rows = []
-    for (let i = 0; i < depth; i++) {
-        rows.push(head.insertRow())
-    }
-    
+    return width
 }
 
 function mapColumns(columns) {
@@ -209,7 +199,72 @@ function mapColumns(columns) {
         m.set(columns[i].id, columns[i])
     }
     return m
-} 
+}
 
-console.log('Header grid:', traverse(config.layout))
-console.log('Columns map:', mapColumns(config.columns))
+class HeaderBillet {
+    constructor() {
+        this.rows = []
+    }
+
+    /**
+     * 
+     * @param {*} cell 
+     * @param {number} depth 
+     */
+    insert(cell, depth) {
+        for (let i = this.rows.length; i <= depth; i++) {
+            this.rows.push([])
+        }
+        this.rows[depth].push(cell)
+    }
+
+    tweak(columns) {
+        let map = mapColumns(columns)
+        let height = this.rows.length
+        for (let i = 0; i < this.rows.length; i++) {
+            let rowConfig = this.rows[i]
+            for (let j = 0; j < rowConfig.length; j++) {
+                let cellConfig = rowConfig[j]
+                if (cellConfig.type === 'data') {
+                    cellConfig.rowspan = height - i
+                    cellConfig.caption = cellConfig.caption || map.get(cellConfig.id).caption
+                }
+            }
+        }
+    }
+
+    /**
+     * Fills table header with rows and cells
+     * @param {HTMLTableSectionElement} header 
+     */
+    mold(header) {
+        for (let i = 0; i < this.rows.length; i++) {
+            let rowConfig = this.rows[i]
+            let row = header.insertRow()
+            for (let j = 0; j < rowConfig.length; j++) {
+                let cellConfig = rowConfig[j]
+                let cell = row.insertCell()
+                cell.innerText = cellConfig.caption || ''
+                let colspan = cellConfig.colspan || 1
+                if (colspan > 1) cell.setAttribute('colspan', colspan)
+                let rowspan = cellConfig.rowspan || 1
+                if (rowspan > 1) cell.setAttribute('rowspan', rowspan)
+            }
+        }
+    }
+}
+
+/**
+ * 
+ * @param {HTMLTableElement} table 
+ * @param {*} config
+ */
+function insertHeader(table, config) {
+    let header = table.createTHead()
+    let billet = new HeaderBillet()
+    traverse(config.layout, billet)
+    billet.tweak(config.columns)
+    billet.mold(header)
+}
+
+insertHeader(table, config)
